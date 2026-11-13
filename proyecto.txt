@@ -1,0 +1,681 @@
+=== FILE: src/config/envs.ts ===
+import 'dotenv/config';
+import Joi from 'joi';
+
+const envSchema = Joi.object({
+  PORT: Joi.number().default(3000),
+  DB_HOST: Joi.string().required(),
+  DB_PORT: Joi.number().default(5432),
+  DB_USER: Joi.string().required(),
+  DB_PASSWORD: Joi.string().required(),
+  DB_NAME: Joi.string().required(),
+  JWT_SECRET: Joi.string().required(),
+}).unknown();
+
+const { error, value: envVars } = envSchema.validate(process.env);
+
+if (error) {
+  throw new Error(`Config validation error - Environment variables missing or invalid: ${error.message}`);
+}
+
+export const envs = {
+  port: envVars.PORT,
+  dbHost: envVars.DB_HOST,
+  dbPort: envVars.DB_PORT,
+  dbUser: envVars.DB_USER,
+  dbPassword: envVars.DB_PASSWORD,
+  dbName: envVars.DB_NAME,
+  jwtSecret: envVars.JWT_SECRET,
+};
+
+
+=== FILE: src/config/database.ts ===
+import { DataSource } from 'typeorm';
+import dotenv from 'dotenv';
+import { User } from '../modules/users/user.entity';
+import { Company } from '../modules/companies/company.entity';
+
+dotenv.config();
+
+export const AppDataSource = new DataSource({
+  type: 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '5432'),
+  username: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'postgres',
+  database: process.env.DB_NAME || 'postgres',
+  synchronize: true,
+  logging: false,
+  entities: [User, Company],
+  subscribers: [],
+  migrations: [],
+});
+
+
+=== FILE: src/config/env.validation.ts ===
+import dotenv from 'dotenv';
+import Joi from 'joi';
+
+// Cargamos el .env
+dotenv.config();
+
+const envSchema = Joi.object({
+  PORT: Joi.number().default(3000),
+  DB_HOST: Joi.string().required(),
+  DB_PORT: Joi.number().default(5432),
+  DB_USER: Joi.string().required(),
+  DB_PASSWORD: Joi.string().required(),
+  DB_NAME: Joi.string().required(),
+  JWT_SECRET: Joi.string().required(),
+}).unknown(); // Permite otras variables del sistema o extras
+
+const { error, value: envVars } = envSchema.validate(process.env);
+
+if (error) {
+  console.error(`❌ Error de configuración en las variables de entorno: ${error.message}`);
+  process.exit(1);
+}
+
+export const env = {
+  port: Number(envVars.PORT),
+  dbHost: envVars.DB_HOST,
+  dbPort: Number(envVars.DB_PORT),
+  dbUser: envVars.DB_USER,
+  dbPassword: envVars.DB_PASSWORD,
+  dbName: envVars.DB_NAME,
+  jwtSecret: envVars.JWT_SECRET,
+};
+
+=== FILE: src/middlewares/auth.middleware.ts ===
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+
+export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Token no proporcionado.' });
+  }
+
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2) {
+    return res.status(401).json({ error: 'Token mal formateado.' });
+  }
+
+  const [scheme, token] = parts;
+  if (!/^Bearer$/i.test(scheme)) {
+    return res.status(401).json({ error: 'Token mal formateado.' });
+  }
+
+  try {
+    const secret = process.env.JWT_SECRET || 'secreto_super_seguro';
+    const decoded = jwt.verify(token, secret);
+    
+    // Inyectamos el usuario decodificado en la request
+    (req as any).user = decoded;
+    
+    return next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Token inválido o expirado.' });
+  }
+};
+
+=== FILE: src/middlewares/validate.middleware.ts ===
+import { Request, Response, NextFunction } from 'express';
+import Joi from 'joi';
+
+export const validateBody = (schema: Joi.ObjectSchema) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const { error } = schema.validate(req.body, { abortEarly: false });
+    
+    if (error) {
+      const errorMessages = error.details.map((detail) => detail.message);
+      res.status(400).json({
+        ok: false,
+        message: 'Error de validación en los datos enviados',
+        errors: errorMessages,
+      });
+      return;
+    }
+    
+    next();
+  };
+};
+
+
+=== FILE: src/middlewares/validation.middleware.ts ===
+import { Request, Response, NextFunction } from 'express';
+import { plainToInstance } from 'class-transformer';
+import { validate, ValidationError } from 'class-validator';
+
+export function validationMiddleware(dtoClass: any) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    // Transformamos el body plano a una instancia del DTO
+    const output = plainToInstance(dtoClass, req.body);
+    
+    // Validamos (whitelist: true ignora campos que no estén en el DTO)
+    const errors: ValidationError[] = await validate(output, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+
+    if (errors.length > 0) {
+      const formattedErrors = errors.map((error) => ({
+        property: error.property,
+        constraints: error.constraints ? Object.values(error.constraints) : [],
+      }));
+
+      return res.status(400).json({
+        error: 'Error de validación en los datos de entrada.',
+        details: formattedErrors,
+      });
+    }
+
+    req.body = output;
+    return next();
+  };
+}
+
+=== FILE: src/middlewares/upload.middleware.ts ===
+import multer from 'multer';
+import path from 'path';
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, `${uniqueSuffix}${path.extname(file.originalname)}`);
+  },
+});
+
+export const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // Límite de 5MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Solo se permiten archivos de imagen.'));
+    }
+  },
+});
+
+=== FILE: src/modules/auth/auth.controller.ts ===
+import { Request, Response } from 'express';
+import { AuthService } from './auth.service';
+
+const authService = new AuthService();
+
+export class AuthController {
+  static async register(req: Request, res: Response) {
+    try {
+      const { email, password, role } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email y contraseña son obligatorios.' });
+      }
+      const user = await authService.register(email, password, role);
+      return res.status(201).json(user);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
+
+  static async login(req: Request, res: Response) {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email y contraseña son obligatorios.' });
+      }
+      const result = await authService.login(email, password);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(401).json({ error: error.message });
+    }
+  }
+}
+
+
+=== FILE: src/modules/auth/auth.routes.ts ===
+import { Router } from 'express';
+import { AuthController } from './auth.controller';
+
+const router = Router();
+
+router.post('/register', AuthController.register);
+router.post('/login', AuthController.login);
+
+export { router as authRoutes };
+
+
+=== FILE: src/modules/auth/auth.service.ts ===
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import { AppDataSource } from '../../config/database';
+import { User } from '../users/user.entity';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'super_secreto_jwt';
+
+export class AuthService {
+  private userRepo = AppDataSource.getRepository(User);
+
+  async register(email: string, password: string, role?: string) {
+    const existingUser = await this.userRepo.findOneBy({ email });
+    if (existingUser) {
+      throw new Error('El correo electrónico ya está registrado.');
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = this.userRepo.create({
+      email,
+      password: hashedPassword,
+      role: role || 'USER',
+    });
+
+    await this.userRepo.save(user);
+    
+    const { password: _, ...userWithoutPassword } = user;
+    return userWithoutPassword;
+  }
+
+  async login(email: string, password: string) {
+    const user = await this.userRepo.findOneBy({ email });
+    if (!user) {
+      throw new Error('Credenciales inválidas.');
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      throw new Error('Credenciales inválidas.');
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    return { token, user: { id: user.id, email: user.email, role: user.role } };
+  }
+}
+
+
+=== FILE: src/modules/auth/auth.schema.ts ===
+import Joi from 'joi';
+
+export const authSchema = Joi.object({
+  email: Joi.string().email().required().messages({
+    'string.email': 'El formato del correo electrónico no es válido',
+    'any.required': 'El correo electrónico es obligatorio',
+  }),
+  password: Joi.string().min(6).required().messages({
+    'string.min': 'La contraseña debe tener al menos 6 caracteres',
+    'any.required': 'La contraseña es obligatoria',
+  }),
+});
+
+
+=== FILE: src/modules/auth/user.entity.ts ===
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+
+@Entity('users')
+export class User {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column({ type: 'varchar', length: 100, unique: true })
+  email!: string;
+
+  @Column({ type: 'varchar', length: 255 })
+  passwordHash!: string;
+
+  @Column({ type: 'varchar', length: 50, default: 'user' })
+  role!: string;
+
+  @CreateDateColumn()
+  createdAt!: Date;
+
+  @UpdateDateColumn()
+  updatedAt!: Date;
+}
+
+
+=== FILE: src/modules/companies/company.controller.ts ===
+import { Request, Response } from 'express';
+import { AppDataSource } from '../../config/database';
+import { Company } from './company.entity';
+import { ILike } from 'typeorm';
+
+export class CompanyController {
+  private companyRepository = AppDataSource.getRepository(Company);
+
+  // Crear empresa
+  public create = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const company = this.companyRepository.create(req.body);
+      await this.companyRepository.save(company);
+      return res.status(201).json(company);
+    } catch (error) {
+      return res.status(500).json({ error: 'Error al crear la empresa.' });
+    }
+  };
+
+  // Listar empresas con Paginación y Búsqueda
+  public findAll = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const search = (req.query.search as string) || '';
+      
+      const skip = (page - 1) * limit;
+
+      const whereCondition = search
+        ? [
+            { name: ILike(`%${search}%`) },
+            { taxId: ILike(`%${search}%`) },
+          ]
+        : {};
+
+      const [companies, total] = await this.companyRepository.findAndCount({
+        where: whereCondition,
+        skip,
+        take: limit,
+        order: { createdAt: 'DESC' },
+      });
+
+      return res.status(200).json({
+        data: companies,
+        pagination: {
+          totalItems: total,
+          itemCount: companies.length,
+          itemsPerPage: limit,
+          currentPage: page,
+          totalPages: Math.ceil(total / limit),
+        },
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Error al obtener las empresas.' });
+    }
+  };
+
+  // Actualizar empresa (PUT)
+  public update = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { id } = req.params;
+      const company = await this.companyRepository.findOneBy({ id });
+
+      if (!company) {
+        return res.status(404).json({ error: 'Empresa no encontrada.' });
+      }
+
+      this.companyRepository.merge(company, req.body);
+      await this.companyRepository.save(company);
+
+      return res.status(200).json(company);
+    } catch (error) {
+      return res.status(500).json({ error: 'Error al actualizar la empresa.' });
+    }
+  };
+
+  // Eliminar empresa (DELETE)
+  public remove = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { id } = req.params;
+      const company = await this.companyRepository.findOneBy({ id });
+
+      if (!company) {
+        return res.status(404).json({ error: 'Empresa no encontrada.' });
+      }
+
+      await this.companyRepository.remove(company);
+      return res.status(204).send();
+    } catch (error) {
+      return res.status(500).json({ error: 'Error al eliminar la empresa.' });
+    }
+  };
+
+  // Subir archivo / logo de la empresa (Multer - Crédito extra)
+  public uploadLogo = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { id } = req.params;
+      const company = await this.companyRepository.findOneBy({ id });
+
+      if (!company) {
+        return res.status(404).json({ error: 'Empresa no encontrada.' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No se subió ningún archivo o el formato no es válido.' });
+      }
+
+      return res.status(200).json({
+        message: 'Archivo subido con éxito',
+        companyId: id,
+        filename: req.file.filename,
+        fileUrl: `/uploads/${req.file.filename}`,
+      });
+    } catch (error) {
+      return res.status(500).json({ error: 'Error al procesar la subida del archivo.' });
+    }
+  };
+}
+
+=== FILE: src/modules/companies/company.entity.ts ===
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+
+@Entity('companies')
+export class Company {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column({ type: 'varchar', length: 150, unique: true })
+  name!: string;
+
+  @Column({ type: 'varchar', length: 50, unique: true })
+  taxId!: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  address?: string;
+
+  @Column({ type: 'boolean', default: true })
+  isActive!: boolean;
+
+  @CreateDateColumn()
+  createdAt!: Date;
+
+  @UpdateDateColumn()
+  updatedAt!: Date;
+}
+
+
+=== FILE: src/modules/companies/company.routes.ts ===
+import { Router } from 'express';
+import { CompanyController } from './company.controller';
+import { authMiddleware } from '../../middlewares/auth.middleware';
+import { validationMiddleware } from '../../middlewares/validation.middleware';
+import { CreateCompanyDto, UpdateCompanyDto } from './company.dto';
+import { upload } from '../../middlewares/upload.middleware'; // <-- Importamos Multer
+
+const router = Router();
+const companyController = new CompanyController();
+
+// Todas las rutas requieren autenticación JWT
+router.use(authMiddleware);
+
+router.post('/', validationMiddleware(CreateCompanyDto), companyController.create);
+router.get('/', companyController.findAll);
+router.put('/:id', validationMiddleware(UpdateCompanyDto), companyController.update);
+router.delete('/:id', companyController.remove);
+
+// Ruta con Multer para subir el logo o archivo de una empresa (Punto extra)
+router.post('/:id/logo', upload.single('logo'), companyController.uploadLogo);
+
+export const companyRoutes = router;
+
+=== FILE: src/modules/companies/company.service.ts ===
+import { Repository } from 'typeorm';
+import { AppDataSource } from '../../config/database';
+import { Company } from './company.entity';
+
+export class CompanyService {
+  private companyRepository: Repository<Company>;
+
+  constructor() {
+    this.companyRepository = AppDataSource.getRepository(Company);
+  }
+
+  async create(data: Partial<Company>): Promise<Company> {
+    const company = this.companyRepository.create(data);
+    return await this.companyRepository.save(company);
+  }
+
+  async findAll(): Promise<Company[]> {
+    return await this.companyRepository.find();
+  }
+
+  async findOne(id: string): Promise<Company | null> {
+    return await this.companyRepository.findOneBy({ id });
+  }
+
+  async update(id: string, data: Partial<Company>): Promise<Company | null> {
+    const company = await this.findOne(id);
+    if (!company) return null;
+    
+    this.companyRepository.merge(company, data);
+    return await this.companyRepository.save(company);
+  }
+
+  async remove(id: string): Promise<boolean> {
+    const company = await this.findOne(id);
+    if (!company) return false;
+
+    await this.companyRepository.remove(company);
+    return true;
+  }
+}
+
+
+=== FILE: src/modules/companies/company.dto.ts ===
+import { IsString, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
+
+export class CreateCompanyDto {
+  @IsString({ message: 'El nombre debe ser un texto.' })
+  @IsNotEmpty({ message: 'El nombre es obligatorio.' })
+  name!: string;
+
+  @IsString({ message: 'El taxId debe ser un texto.' })
+  @IsNotEmpty({ message: 'El taxId (CUIT) es obligatorio.' })
+  taxId!: string;
+
+  @IsString({ message: 'La dirección debe ser un texto.' })
+  @IsNotEmpty({ message: 'La dirección es obligatoria.' })
+  address!: string;
+
+  @IsString({ message: 'El teléfono debe ser un texto.' })
+  @IsNotEmpty({ message: 'El teléfono es obligatorio.' })
+  phone!: string;
+}
+
+export class UpdateCompanyDto {
+  @IsString({ message: 'El nombre debe ser un texto.' })
+  @IsOptional()
+  name?: string;
+
+  @IsString({ message: 'El taxId debe ser un texto.' })
+  @IsOptional()
+  taxId?: string;
+
+  @IsString({ message: 'La dirección debe ser un texto.' })
+  @IsOptional()
+  address?: string;
+
+  @IsString({ message: 'El teléfono debe ser un texto.' })
+  @IsOptional()
+  phone?: string;
+
+  @IsBoolean({ message: 'isActive debe ser un booleano (true/false).' })
+  @IsOptional()
+  isActive?: boolean;
+}
+
+=== FILE: src/modules/users/user.entity.ts ===
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+
+@Entity('users')
+export class User {
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  @Column({ type: 'varchar', length: 100, unique: true })
+  email!: string;
+
+  @Column({ type: 'varchar', length: 255 })
+  password!: string;
+
+  @Column({ type: 'varchar', length: 50, default: 'USER' })
+  role!: string;
+
+  @CreateDateColumn()
+  createdAt!: Date;
+
+  @UpdateDateColumn()
+  updatedAt!: Date;
+}
+
+
+=== FILE: src/app.ts ===
+import express from 'express';
+import cors from 'cors';
+import { authRouter } from './modules/auth/auth.routes';
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+app.use('/api/auth', authRouter);
+
+export default app;
+
+
+=== FILE: src/server.ts ===
+import 'reflect-metadata';
+import './config/env.validation'; // <-- Validación de variables de entorno con Joi (requisito obligatorio)
+import express from 'express';
+import cors from 'cors';
+import path from 'path'; // <-- Necesario para manejar rutas estáticas
+import { AppDataSource } from './config/database';
+import { companyRoutes } from './modules/companies/company.routes';
+import { authRoutes } from './modules/auth/auth.routes';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middlewares
+app.use(express.json());
+app.use(cors());
+
+// Servir la carpeta uploads de forma estática (Multer)
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Rutas
+app.use('/api/auth', authRoutes);
+app.use('/api/companies', companyRoutes);
+
+// Inicializar Base de Datos y levantar servidor
+AppDataSource.initialize()
+  .then(() => {
+    console.log('📦 Conexión a la Base de Datos establecida con éxito.');
+    
+    app.listen(PORT, () => {
+      console.log(`🚀 Servidor corriendo en el puerto: ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error('❌ Error al conectar con la Base de Datos:', error);
+  });
+
+export default app;
+

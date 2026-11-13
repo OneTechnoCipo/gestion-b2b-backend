@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    /* File Layout */
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    /* Environment Settings */
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "types": ["node"],
+
+    /* Decoradores para TypeORM (OBLIGATORIOS) */
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    /* Interop & Compatibilidad */
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+
+    /* Outputs */
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    /* Typechecking Estricto */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"]
+}

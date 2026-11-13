@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestión B2B - Panel Ocupacional</title>
+    <!-- Tailwind CSS para que quede fachero al instante -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <header class="bg-slate-800 border-b border-slate-700 p-4 flex justify-between items-center shadow-md">
+        <h1 class="text-xl font-bold tracking-wide text-blue-400">🏢 Gestor B2B / Clínica Ocupacional</h1>
+        <div id="user-info" class="hidden flex items-center gap-4">
+            <span id="user-email" class="text-sm text-slate-300"></span>
+            <button onclick="logout()" class="bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded text-sm font-medium transition">Cerrar Sesión</button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-grow container mx-auto p-6 max-w-5xl">
+
+        <!-- SECCIÓN LOGIN -->
+        <section id="login-section" class="max-w-md mx-auto bg-slate-800 p-8 rounded-xl shadow-lg border border-slate-700 mt-12">
+            <h2 class="text-2xl font-semibold mb-6 text-center text-white">Iniciar Sesión</h2>
+            <form id="login-form" onsubmit="handleLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-slate-300">Correo Electrónico</label>
+                    <input type="email" id="email" required class="w-full bg-slate-900 border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-slate-300">Contraseña</label>
+                    <input type="password" id="password" required class="w-full bg-slate-900 border border-slate-700 rounded p-2.5 text-white focus:outline-none focus:border-blue-500">
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 font-medium p-2.5 rounded transition">Ingresar</button>
+                <p id="login-error" class="text-red-400 text-sm text-center mt-2 hidden"></p>
+            </form>
+        </section>
+
+        <!-- SECCIÓN DASHBOARD (Empresas) -->
+        <section id="dashboard-section" class="hidden space-y-6">
+            <div class="flex justify-between items-center bg-slate-800 p-4 rounded-xl border border-slate-700">
+                <h3 class="text-lg font-semibold text-white">Listado de Empresas Clientes</h3>
+                <button onclick="openModal()" class="bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded text-sm font-medium transition">+ Nueva Empresa</button>
+            </div>
+
+            <!-- Tabla -->
+            <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-lg">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-700/50 text-slate-300 text-sm border-b border-slate-700">
+                            <th class="p-3.5">Nombre</th>
+                            <th class="p-3.5">CUIT (Tax ID)</th>
+                            <th class="p-3.5">Dirección</th>
+                            <th class="p-3.5 text-center">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="companies-table-body" class="divide-y divide-slate-700 text-sm">
+                        <!-- Se llena por JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Modal Crear Empresa -->
+    <div id="company-modal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-6 max-w-md w-full shadow-2xl">
+            <h3 class="text-lg font-semibold mb-4 text-white">Registrar Nueva Empresa</h3>
+            <form id="company-form" onsubmit="handleCreateCompany(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm mb-1 text-slate-300">Nombre de la Empresa</label>
+                    <input type="text" id="c-name" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1 text-slate-300">CUIT (Tax ID)</label>
+                    <input type="text" id="c-taxId" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1 text-slate-300">Dirección</label>
+                    <input type="text" id="c-address" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1 text-slate-300">Teléfono</label>
+                    <input type="text" id="c-phone" required class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white">
+                </div>
+                <div class="flex justify-end gap-3 mt-6">
+                    <button type="button" onclick="closeModal()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded text-sm">Cancelar</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-medium">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Script de lógica Frontend -->
+    <script>
+        const API_URL = 'http://localhost:3000/api';
+
+        // Comprobar si ya hay token al cargar
+        window.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('token');
+            if (token) {
+                showDashboard();
+            }
+        });
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('login-error');
+
+            try {
+                const res = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+
+                if (!res.ok) throw new Error(data.error || 'Credenciales incorrectas');
+
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('email', data.user.email);
+                showDashboard();
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        function showDashboard() {
+            document.getElementById('login-section').classList.add('hidden');
+            document.getElementById('dashboard-section').classList.remove('hidden');
+            document.getElementById('user-info').classList.remove('hidden');
+            document.getElementById('user-email').textContent = localStorage.getItem('email');
+            loadCompanies();
+        }
+
+        function logout() {
+            localStorage.clear();
+            location.reload();
+        }
+
+        async function loadCompanies() {
+            const token = localStorage.getItem('token');
+            try {
+                const res = await fetch(`${API_URL}/companies`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const result = await res.json();
+                const tbody = document.getElementById('companies-table-body');
+                tbody.innerHTML = '';
+
+                const companies = result.data || result; // Por si viene paginado o plano
+                companies.forEach(comp => {
+                    tbody.innerHTML += `
+                        <tr class="hover:bg-slate-700/30 transition">
+                            <td class="p-3.5 font-medium text-white">${comp.name}</td>
+                            <td class="p-3.5 text-slate-300">${comp.taxId}</td>
+                            <td class="p-3.5 text-slate-300">${comp.address || '-'}</td>
+                            <td class="p-3.5 text-center">
+                                <label class="bg-blue-600/80 hover:bg-blue-600 text-white px-3 py-1.5 rounded text-xs cursor-pointer inline-block transition">
+                                    Subir Logo/Doc
+                                    <input type="file" class="hidden" onchange="uploadLogo('${comp.id}', this)">
+                                </label>
+                            </td>
+                        </tr>
+                    `;
+                });
+            } catch (err) {
+                console.error('Error al cargar empresas', err);
+            }
+        }
+
+        function openModal() { document.getElementById('company-modal').classList.remove('hidden'); }
+        function closeModal() { document.getElementById('company-modal').classList.add('hidden'); }
+
+        async function handleCreateCompany(e) {
+            e.preventDefault();
+            const token = localStorage.getItem('token');
+            const body = {
+                name: document.getElementById('c-name').value,
+                taxId: document.getElementById('c-taxId').value,
+                address: document.getElementById('c-address').value,
+                phone: document.getElementById('c-phone').value,
+            };
+
+            const res = await fetch(`${API_URL}/companies`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(body)
+            });
+
+            if (res.ok) {
+                closeModal();
+                loadCompanies();
+                document.getElementById('company-form').reset();
+            } else {
+                alert('Error al crear la empresa');
+            }
+        }
+
+        async function uploadLogo(companyId, input) {
+            if (!input.files || !input.files[0]) return;
+            const token = localStorage.getItem('token');
+            const formData = new FormData();
+            formData.append('logo', input.files[0]);
+
+            const res = await fetch(`${API_URL}/companies/${companyId}/logo`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData
+            });
+
+            if (res.ok) {
+                alert('¡Archivo/Logo subido con éxito via Multer!');
+            } else {
+                alert('Error al subir el archivo');
+            }
+        }
+    </script>
+</body>
+</html>
